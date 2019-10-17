@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstddef>
-#include <iterator>
+#include <array>
 
 #include "L0_Platform/arm_cortex/m4/core_cm4.h"
 #include "L1_Peripheral/interrupt.hpp"
@@ -14,28 +14,15 @@ namespace cortex
 class InterruptController final : public sjsu::InterruptController
 {
  public:
-  static constexpr int32_t kArmIrqOffset      = (-cortex::Reset_IRQn) + 1;
-  static constexpr size_t kNumberOfInterrupts = 64;
-
-  inline static SCB_Type * scb     = SCB;
-  inline static int current_vector = cortex::Reset_IRQn;
-
-  static void UnregisteredArmExceptions() {}
-
-  static void UnregisteredInterruptHandler()
-  {
-    LOG_WARNING(
-        "No interrupt service routine found for the vector %d! Disabling ISR",
-        current_vector);
-    NVIC_DisableIRQ(current_vector - kArmIrqOffset);
-  }
+  using NvicFunction         = void (*)(IRQn_Type);
+  using NvicPriorityFunction = void (*)(IRQn_Type, uint32_t);
 
   struct VectorTable_t
   {
-    IsrPointer vector[kNumberOfInterrupts];
+    std::array<IsrPointer, kNumberOfInterrupts> vector;
     void Print()
     {
-      for (size_t i = 0; i < std::size(vector); i++)
+      for (size_t i = 0; i < vector.size(); i++)
       {
         LOG_INFO("vector[%zu] = %p", i, vector[i]);
       }
@@ -43,33 +30,50 @@ class InterruptController final : public sjsu::InterruptController
 
     static constexpr VectorTable_t GenerateDefaultTable()
     {
-      VectorTable_t temp_table = { 0 };
+      VectorTable_t result = { 0 };
       // The Arm exceptions may be enabled by default and should simply be
       // called and do nothing.
       for (size_t i = 0; i < kArmIrqOffset; i++)
       {
-        temp_table.vector[i] = UnregisteredArmExceptions;
+        result.vector[i] = UnregisteredArmExceptions;
       }
       // For all other exceptions, give a handler that will disable the ISR if
       // it is enabled but has not been registered.
-      for (size_t i = kArmIrqOffset; i < std::size(temp_table.vector); i++)
+      for (size_t i = kArmIrqOffset; i < result.vector.size(); i++)
       {
-        temp_table.vector[i] = UnregisteredInterruptHandler;
+        result.vector[i] = UnregisteredInterruptHandler;
       }
-      return temp_table;
+      return result;
     }
   };
 
-  inline static VectorTable_t table = VectorTable_t::GenerateDefaultTable();
-
-  static int IrqToIndex(int irq)
+  static constexpr int IrqToIndex(int irq)
   {
     return irq + kArmIrqOffset;
   }
 
-  static int IndexToIrq(int index)
+  static constexpr int IndexToIrq(int index)
   {
     return index - kArmIrqOffset;
+  }
+
+  inline static VectorTable_t table = VectorTable_t::GenerateDefaultTable();
+  inline static NvicFunction enable               = NVIC_EnableIRQ;
+  inline static NvicFunction disable              = NVIC_DisableIRQ;
+  inline static NvicPriorityFunction set_priority = NVIC_SetPriority;
+  inline static SCB_Type * scb     = SCB;
+  inline static int current_vector = cortex::Reset_IRQn;
+
+  static constexpr int32_t kArmIrqOffset      = (-cortex::Reset_IRQn) + 1;
+  static constexpr size_t kNumberOfInterrupts = 64;
+
+  static void UnregisteredArmExceptions() {}
+  static void UnregisteredInterruptHandler()
+  {
+    LOG_WARNING(
+        "No interrupt service routine found for the vector %d! Disabling ISR",
+        current_vector);
+    disable(current_vector - kArmIrqOffset);
   }
 
   static IsrPointer * GetVector(int irq)
@@ -92,17 +96,17 @@ class InterruptController final : public sjsu::InterruptController
     *GetVector(irq) = register_info.interrupt_service_routine;
     if (register_info.enable_interrupt && irq >= 0)
     {
-      NVIC_EnableIRQ(irq);
+      enable(irq);
     }
     if (register_info.priority > -1)
     {
-      NVIC_SetPriority(irq, register_info.priority);
+      set_priority(irq, register_info.priority);
     }
   }
 
   void Deregister(int irq) const override
   {
-    NVIC_DisableIRQ(irq);
+    disable(irq);
     *GetVector(irq) = UnregisteredInterruptHandler;
   }
 };
