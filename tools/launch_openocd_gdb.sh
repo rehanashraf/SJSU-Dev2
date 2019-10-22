@@ -8,8 +8,6 @@ OPENOCD=$5
 DEBUG_DEVICE=$6
 OPENOCD_CONFIG=$7
 
-GDB_ARGS=""
-
 if [ $PLATFORM == "linux" ]
 then
   $DEVICE_GDB $EXECUTABLE -ex "source $GDBINIT_PATH"
@@ -20,7 +18,7 @@ else # For all other platforms
   # Capture the pid of the background OpenOCD process
   OPENOCD_PID=$(echo $!)
   # Wait for OpenOCD to continue or quit
-  sleep 2
+  sleep 0.5
   # Use kill to check if OpenOCD is running
   kill -0 $OPENOCD_PID &> /dev/null
   # Capture success or failure of check above
@@ -35,7 +33,9 @@ else # For all other platforms
     exit 1
   fi
   # When the GDB session closes, kill openocd below
-  $DEVICE_GDB $EXECUTABLE -ex "target remote :3333" $GDB_ARGS
+  $DEVICE_GDB $EXECUTABLE \
+      -ex "target remote :3333" \
+      -ex "source $GDBINIT_PATH"
 
   echo "Killing OpenOCD PID: $OPENOCD_PID"
   kill $OPENOCD_PID
